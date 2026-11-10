@@ -1,0 +1,14 @@
+.git
+.github
+backend
+**/node_modules
+**/vendor
+**/dist
+**/coverage
+**/playwright-report
+**/test-results
+**/blob-report
+**/.env
+**/.env.*
+docs
+README.md

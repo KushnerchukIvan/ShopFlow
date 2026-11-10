@@ -1,0 +1,1190 @@
+openapi: 3.0.3
+info:
+  title: ShopFlow Inventory Management API
+  version: 1.0.0
+  description: |
+    REST API for ShopFlow, a multi-warehouse inventory management system.
+
+    ## Authentication
+    The API uses Laravel Sanctum stateful SPA cookie authentication.
+    1. `GET /sanctum/csrf-cookie` to obtain the `XSRF-TOKEN` and session cookies.
+    2. Send the URL-decoded `XSRF-TOKEN` value in the `X-XSRF-TOKEN` header for
+       every `POST`, `PUT`, `PATCH`, and `DELETE` request.
+    3. Send cookies with `withCredentials`.
+
+    All `/api/v1/*` routes except login require an authenticated session.
+    Role and warehouse checks are enforced server-side; hiding UI controls is
+    not a security boundary.
+
+    ## Response envelope
+    Successful resource responses use `{ "data": ... }`. List responses use
+    `{ "data": [...], "meta": { ... } }` or Laravel resource pagination meta.
+    Validation failures return HTTP 422 with `{ "message", "errors" }`.
+servers:
+  - url: http://localhost:8000
+    description: Local Docker Compose
+security:
+  - sanctumCookie: []
+tags:
+  - name: Authentication
+  - name: Dashboard
+  - name: Products
+  - name: Categories
+  - name: Warehouses
+  - name: Inventory
+  - name: Stock movements
+  - name: Suppliers
+  - name: Purchase orders
+  - name: Transfers
+  - name: Adjustments
+  - name: Reports
+  - name: Users
+  - name: Settings
+
+paths:
+  /sanctum/csrf-cookie:
+    get:
+      tags: [Authentication]
+      summary: Issue CSRF and session cookies
+      security: []
+      responses:
+        '204': { description: Cookies issued }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Authenticated user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '422': { $ref: '#/components/responses/Validation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Invalidate the current session
+      responses:
+        '204': { description: Signed out }
+
+  /api/v1/auth/user:
+    get:
+      tags: [Authentication]
+      summary: Current authenticated user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/user/password:
+    put:
+      tags: [Authentication]
+      summary: Change the current user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, password, password_confirmation]
+              properties:
+                current_password: { type: string, format: password }
+                password: { type: string, format: password, minLength: 8 }
+                password_confirmation: { type: string, format: password }
+      responses:
+        '200': { description: Password updated }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: KPI summary for the accessible warehouse scope
+      responses:
+        '200':
+          description: KPI summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DashboardSummary' }
+
+  /api/v1/dashboard/charts:
+    get:
+      tags: [Dashboard]
+      summary: Chart series for inventory value, movements, categories, and top products
+      responses:
+        '200': { description: Chart data }
+
+  /api/v1/dashboard/recent-movements:
+    get:
+      tags: [Dashboard]
+      summary: Latest stock movements in scope
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200': { description: Recent movements }
+
+  /api/v1/dashboard/low-stock:
+    get:
+      tags: [Dashboard]
+      summary: Low-stock balances in scope
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200': { description: Low-stock rows }
+
+  /api/v1/products:
+    get:
+      tags: [Products]
+      summary: Paginated product catalog
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { $ref: '#/components/parameters/SortBy' }
+        - { $ref: '#/components/parameters/SortDirection' }
+        - { name: category_id, in: query, schema: { type: integer } }
+        - { name: supplier_id, in: query, schema: { type: integer } }
+        - { name: is_active, in: query, schema: { type: boolean } }
+      responses:
+        '200': { description: Product page }
+    post:
+      tags: [Products]
+      summary: Create a product (admin or manager)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '201': { description: Product created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/products/{product}:
+    parameters:
+      - { name: product, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Products]
+      summary: Product detail with stock by warehouse
+      responses:
+        '200': { description: Product detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Products]
+      summary: Update a product (admin or manager)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '200': { description: Product updated }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Products]
+      summary: Archive a product with no stock or open documents
+      responses:
+        '200': { description: Product archived }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/products/{product}/image:
+    parameters:
+      - { name: product, in: path, required: true, schema: { type: integer } }
+    post:
+      tags: [Products]
+      summary: Upload a product image
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        '200': { description: Image stored }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Products]
+      summary: Remove a product image
+      responses:
+        '200': { description: Image removed }
+
+  /api/v1/categories:
+    get:
+      tags: [Categories]
+      summary: Category list or nested tree with `tree=true`
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { name: tree, in: query, schema: { type: boolean } }
+      responses:
+        '200': { description: Categories }
+    post:
+      tags: [Categories]
+      summary: Create a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+      responses:
+        '201': { description: Category created }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/categories/{category}:
+    parameters:
+      - { name: category, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Categories]
+      summary: Category detail
+      responses:
+        '200': { description: Category detail }
+    put:
+      tags: [Categories]
+      summary: Update a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+      responses:
+        '200': { description: Category updated }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Categories]
+      summary: Delete an unused category
+      responses:
+        '200': { description: Category deleted }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/warehouses:
+    get:
+      tags: [Warehouses]
+      summary: Warehouses visible to the current user
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+      responses:
+        '200': { description: Warehouse page }
+    post:
+      tags: [Warehouses]
+      summary: Create a warehouse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WarehouseInput' }
+      responses:
+        '201': { description: Warehouse created }
+
+  /api/v1/warehouses/{warehouse}:
+    parameters:
+      - { name: warehouse, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Warehouses]
+      summary: Warehouse detail with statistics and employees
+      responses:
+        '200': { description: Warehouse detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Warehouses]
+      summary: Update a warehouse
+      responses:
+        '200': { description: Warehouse updated }
+    delete:
+      tags: [Warehouses]
+      summary: Delete a warehouse with no history
+      responses:
+        '200': { description: Warehouse deleted }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/warehouses/{warehouse}/employees:
+    put:
+      tags: [Warehouses]
+      summary: Replace warehouse employee assignments (admin or manager)
+      parameters:
+        - { name: warehouse, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ids]
+              properties:
+                user_ids:
+                  type: array
+                  items: { type: integer }
+      responses:
+        '200': { description: Assignments updated }
+
+  /api/v1/inventory:
+    get:
+      tags: [Inventory]
+      summary: Paginated stock balances
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { $ref: '#/components/parameters/SortBy' }
+        - { $ref: '#/components/parameters/SortDirection' }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+        - { name: category_id, in: query, schema: { type: integer } }
+        - { name: product_id, in: query, schema: { type: integer } }
+        - { name: low_stock, in: query, schema: { type: boolean } }
+        - { name: stock_status, in: query, schema: { type: string, enum: [ok, low, out] } }
+      responses:
+        '200': { description: Inventory page }
+
+  /api/v1/inventory/{productId}:
+    get:
+      tags: [Inventory]
+      summary: Balances for one product across accessible warehouses
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Product balances }
+
+  /api/v1/inventory/stock-in:
+    post:
+      tags: [Inventory]
+      summary: Increase stock and append an IN movement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StockChangeInput' }
+      responses:
+        '200': { description: Updated balance }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/inventory/stock-out:
+    post:
+      tags: [Inventory]
+      summary: Decrease stock and append an OUT movement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StockChangeInput' }
+      responses:
+        '200': { description: Updated balance }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/stock-movements:
+    get:
+      tags: [Stock movements]
+      summary: Immutable stock movement ledger
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { $ref: '#/components/parameters/SortDirection' }
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/MovementType' } }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+        - { name: product_id, in: query, schema: { type: integer } }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+      responses:
+        '200': { description: Movement page }
+
+  /api/v1/stock-movements/{movement}:
+    get:
+      tags: [Stock movements]
+      summary: Movement detail
+      parameters:
+        - { name: movement, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Movement detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/stock-movements/export:
+    get:
+      tags: [Stock movements]
+      summary: Export filtered movements as CSV
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+
+  /api/v1/suppliers:
+    get:
+      tags: [Suppliers]
+      summary: Supplier list
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+      responses:
+        '200': { description: Supplier page }
+    post:
+      tags: [Suppliers]
+      summary: Create a supplier
+      responses:
+        '201': { description: Supplier created }
+
+  /api/v1/suppliers/{supplier}:
+    parameters:
+      - { name: supplier, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Suppliers]
+      summary: Supplier detail with recent purchase orders
+      responses:
+        '200': { description: Supplier detail }
+    put:
+      tags: [Suppliers]
+      summary: Update a supplier
+      responses:
+        '200': { description: Supplier updated }
+    delete:
+      tags: [Suppliers]
+      summary: Delete an unreferenced supplier
+      responses:
+        '200': { description: Supplier deleted }
+
+  /api/v1/purchase-orders:
+    get:
+      tags: [Purchase orders]
+      summary: Purchase order list
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PurchaseOrderStatus' } }
+        - { name: supplier_id, in: query, schema: { type: integer } }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+      responses:
+        '200': { description: Purchase order page }
+    post:
+      tags: [Purchase orders]
+      summary: Create a draft purchase order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurchaseOrderInput' }
+      responses:
+        '201': { description: Draft created }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/purchase-orders/{purchaseOrder}:
+    parameters:
+      - { name: purchaseOrder, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Purchase orders]
+      summary: Purchase order detail
+      responses:
+        '200': { description: Purchase order detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Purchase orders]
+      summary: Update a draft purchase order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurchaseOrderInput' }
+      responses:
+        '200': { description: Draft updated }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/purchase-orders/{purchaseOrder}/submit:
+    post:
+      tags: [Purchase orders]
+      summary: Submit a draft order
+      parameters:
+        - { name: purchaseOrder, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Order submitted }
+
+  /api/v1/purchase-orders/{purchaseOrder}/receive:
+    post:
+      tags: [Purchase orders]
+      summary: Receive ordered goods partially or fully
+      parameters:
+        - { name: purchaseOrder, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [product_id, quantity]
+                    properties:
+                      product_id: { type: integer }
+                      quantity: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Receipt recorded }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/purchase-orders/{purchaseOrder}/cancel:
+    post:
+      tags: [Purchase orders]
+      summary: Cancel an eligible purchase order
+      parameters:
+        - { name: purchaseOrder, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Order cancelled }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/transfers:
+    get:
+      tags: [Transfers]
+      summary: Transfer list
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TransferStatus' } }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Transfer page }
+    post:
+      tags: [Transfers]
+      summary: Create a draft transfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferInput' }
+      responses:
+        '201': { description: Transfer created }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/transfers/{transfer}:
+    get:
+      tags: [Transfers]
+      summary: Transfer detail
+      parameters:
+        - { name: transfer, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Transfer detail }
+
+  /api/v1/transfers/{transfer}/submit:
+    post:
+      tags: [Transfers]
+      summary: Validate stock and move a transfer to IN_TRANSIT
+      parameters:
+        - { name: transfer, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Transfer in transit }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/transfers/{transfer}/complete:
+    post:
+      tags: [Transfers]
+      summary: Atomically move stock and complete the transfer
+      parameters:
+        - { name: transfer, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Transfer completed }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/transfers/{transfer}/cancel:
+    post:
+      tags: [Transfers]
+      summary: Cancel a draft or in-transit transfer
+      parameters:
+        - { name: transfer, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Transfer cancelled }
+
+  /api/v1/adjustments:
+    get:
+      tags: [Adjustments]
+      summary: Stock adjustment list
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { name: status, in: query, schema: { type: string, enum: [DRAFT, SUBMITTED] } }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Adjustment page }
+    post:
+      tags: [Adjustments]
+      summary: Create a draft physical count
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdjustmentInput' }
+      responses:
+        '201': { description: Adjustment draft created }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/adjustments/{adjustment}:
+    get:
+      tags: [Adjustments]
+      summary: Adjustment detail
+      parameters:
+        - { name: adjustment, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Adjustment detail }
+
+  /api/v1/adjustments/{adjustment}/submit:
+    post:
+      tags: [Adjustments]
+      summary: Apply counted quantities and append adjustment movements
+      parameters:
+        - { name: adjustment, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Adjustment applied }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/reports/summary:
+    get:
+      tags: [Reports]
+      summary: Warehouse-scoped inventory totals
+      responses:
+        '200': { description: Report summary }
+
+  /api/v1/reports/inventory-valuation:
+    get:
+      tags: [Reports]
+      summary: Inventory valuation grouped by product
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { $ref: '#/components/parameters/SortBy' }
+        - { $ref: '#/components/parameters/SortDirection' }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+        - { name: category_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Valuation page }
+
+  /api/v1/reports/inventory-by-warehouse:
+    get:
+      tags: [Reports]
+      summary: Inventory aggregates by warehouse
+      responses:
+        '200': { description: Warehouse aggregates }
+
+  /api/v1/reports/inventory-by-category:
+    get:
+      tags: [Reports]
+      summary: Inventory aggregates by category
+      responses:
+        '200': { description: Category aggregates }
+
+  /api/v1/reports/low-stock:
+    get:
+      tags: [Reports]
+      summary: Low-stock balances
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+        - { name: category_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Low-stock page }
+
+  /api/v1/reports/stock-movements:
+    get:
+      tags: [Reports]
+      summary: Movement totals grouped by type and date
+      parameters:
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/MovementType' } }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Movement report }
+
+  /api/v1/reports/purchase-history:
+    get:
+      tags: [Reports]
+      summary: Purchase order history
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PurchaseOrderStatus' } }
+        - { name: supplier_id, in: query, schema: { type: integer } }
+        - { name: warehouse_id, in: query, schema: { type: integer } }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+      responses:
+        '200': { description: Purchase history page }
+
+  /api/v1/reports/inventory-valuation.csv:
+    get:
+      tags: [Reports]
+      summary: CSV inventory export
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+
+  /api/v1/reports/low-stock.csv:
+    get:
+      tags: [Reports]
+      summary: CSV low-stock export
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+
+  /api/v1/reports/movements.csv:
+    get:
+      tags: [Reports]
+      summary: CSV stock movement export
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: List users (admin only)
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PerPage' }
+        - { $ref: '#/components/parameters/Search' }
+        - { name: role, in: query, schema: { $ref: '#/components/schemas/Role' } }
+        - { name: is_active, in: query, schema: { type: boolean } }
+      responses:
+        '200': { description: User page }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Users]
+      summary: Create a user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserInput' }
+      responses:
+        '201': { description: User created }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/users/{user}:
+    parameters:
+      - { name: user, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Users]
+      summary: User detail (admin only)
+      responses:
+        '200': { description: User detail }
+    put:
+      tags: [Users]
+      summary: Update a user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserInput' }
+      responses:
+        '200': { description: User updated }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/users/{user}/status:
+    patch:
+      tags: [Users]
+      summary: Activate or deactivate a user (admin only)
+      parameters:
+        - { name: user, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_active]
+              properties:
+                is_active: { type: boolean }
+      responses:
+        '200': { description: Status updated }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/settings:
+    get:
+      tags: [Settings]
+      summary: Read workspace settings
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Settings' }
+    put:
+      tags: [Settings]
+      summary: Update settings (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Settings' }
+      responses:
+        '200': { description: Settings updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+components:
+  securitySchemes:
+    sanctumCookie:
+      type: apiKey
+      in: cookie
+      name: laravel_session
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 15 }
+    Search:
+      name: search
+      in: query
+      schema: { type: string }
+    SortBy:
+      name: sort_by
+      in: query
+      schema: { type: string }
+    SortDirection:
+      name: sort_direction
+      in: query
+      schema: { type: string, enum: [asc, desc] }
+    From:
+      name: from
+      in: query
+      schema: { type: string, format: date }
+    To:
+      name: to
+      in: query
+      schema: { type: string, format: date }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 50 }
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: The authenticated user is not allowed to perform this action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found or outside the user's warehouse scope
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Validation:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+    TooManyRequests:
+      description: Too many authentication attempts
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Role:
+      type: string
+      enum: [admin, manager, warehouse_operator, viewer]
+    MovementType:
+      type: string
+      enum: [IN, OUT, TRANSFER_IN, TRANSFER_OUT, ADJUSTMENT_IN, ADJUSTMENT_OUT]
+    PurchaseOrderStatus:
+      type: string
+      enum: [DRAFT, ORDERED, PARTIALLY_RECEIVED, RECEIVED, CANCELLED]
+    TransferStatus:
+      type: string
+      enum: [DRAFT, IN_TRANSIT, COMPLETED, CANCELLED]
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page: { type: integer }
+        last_page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+
+    ValidationError:
+      type: object
+      properties:
+        message: { type: string, example: Validation failed }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        is_active: { type: boolean }
+        warehouse_ids:
+          type: array
+          items: { type: integer }
+        warehouses:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+              code: { type: string }
+
+    UserEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/User' }
+
+    UserInput:
+      type: object
+      required: [name, email, role]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        role: { $ref: '#/components/schemas/Role' }
+        is_active: { type: boolean }
+        warehouse_ids:
+          type: array
+          items: { type: integer }
+
+    ProductInput:
+      type: object
+      required: [name, sku, category_id, unit, purchase_price, selling_price, minimum_stock]
+      properties:
+        name: { type: string }
+        sku: { type: string }
+        barcode: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        category_id: { type: integer }
+        supplier_id: { type: integer, nullable: true }
+        unit: { type: string }
+        purchase_price: { type: string, example: '12.50' }
+        selling_price: { type: string, example: '19.99' }
+        minimum_stock: { type: integer, minimum: 0 }
+        image_path: { type: string, nullable: true }
+        is_active: { type: boolean }
+
+    Product:
+      allOf:
+        - $ref: '#/components/schemas/ProductInput'
+        - type: object
+          properties:
+            id: { type: integer }
+            category:
+              type: object
+              properties:
+                id: { type: integer }
+                name: { type: string }
+            supplier:
+              type: object
+              nullable: true
+              properties:
+                id: { type: integer }
+                name: { type: string }
+            image_url: { type: string, nullable: true }
+            total_quantity: { type: integer }
+
+    CategoryInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        slug: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        parent_id: { type: integer, nullable: true }
+
+    WarehouseInput:
+      type: object
+      required: [name, code]
+      properties:
+        name: { type: string }
+        code: { type: string }
+        address: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        is_active: { type: boolean }
+
+    StockChangeInput:
+      type: object
+      required: [product_id, warehouse_id, quantity, reason]
+      properties:
+        product_id: { type: integer }
+        warehouse_id: { type: integer }
+        quantity: { type: integer, minimum: 1 }
+        reason: { type: string, maxLength: 255 }
+        notes: { type: string, nullable: true }
+
+    StockBalance:
+      type: object
+      properties:
+        id: { type: integer }
+        product_id: { type: integer }
+        warehouse_id: { type: integer }
+        quantity: { type: integer }
+        minimum_stock: { type: integer }
+        purchase_price: { type: string }
+        stock_value: { type: string }
+        stock_status: { type: string, enum: [ok, low, out] }
+        product:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            sku: { type: string }
+        warehouse:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            code: { type: string }
+
+    StockMovement:
+      type: object
+      properties:
+        id: { type: integer }
+        product_id: { type: integer }
+        warehouse_id: { type: integer }
+        user_id: { type: integer }
+        type: { $ref: '#/components/schemas/MovementType' }
+        quantity: { type: integer }
+        reference_type: { type: string, nullable: true }
+        reference_id: { type: integer, nullable: true }
+        reason: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    PurchaseOrderInput:
+      type: object
+      required: [supplier_id, warehouse_id, items]
+      properties:
+        supplier_id: { type: integer }
+        warehouse_id: { type: integer }
+        expected_at: { type: string, format: date, nullable: true }
+        notes: { type: string, nullable: true }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id, quantity, unit_cost]
+            properties:
+              product_id: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+              unit_cost: { type: number, minimum: 0 }
+
+    TransferInput:
+      type: object
+      required: [source_warehouse_id, destination_warehouse_id, items]
+      properties:
+        source_warehouse_id: { type: integer }
+        destination_warehouse_id: { type: integer }
+        notes: { type: string, nullable: true }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id, quantity]
+            properties:
+              product_id: { type: integer }
+              quantity: { type: integer, minimum: 1 }
+
+    AdjustmentInput:
+      type: object
+      required: [warehouse_id, reason, items]
+      properties:
+        warehouse_id: { type: integer }
+        reason: { type: string }
+        notes: { type: string, nullable: true }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id, counted_quantity]
+            properties:
+              product_id: { type: integer }
+              counted_quantity: { type: integer, minimum: 0 }
+
+    DashboardSummary:
+      type: object
+      properties:
+        total_products: { type: integer }
+        active_products: { type: integer }
+        total_stock_value: { type: string }
+        total_warehouses: { type: integer }
+        low_stock_products: { type: integer }
+        pending_purchase_orders: { type: integer }
+        total_units: { type: integer }
+        total_suppliers: { type: integer }
+
+    Settings:
+      type: object
+      required: [company_name, currency, timezone, date_format]
+      properties:
+        company_name: { type: string }
+        currency: { type: string, enum: [USD, EUR, UAH, GBP, PLN, CAD, AUD] }
+        timezone: { type: string, example: Europe/Kyiv }
+        date_format: { type: string, enum: [Y-m-d, d/m/Y, m/d/Y, d.m.Y] }
